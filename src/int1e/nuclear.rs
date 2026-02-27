@@ -5,7 +5,7 @@
 
 use std::f64::consts::PI;
 use crate::types::{
-    AtmSlot, BasSlot, Env, SQRTPI, common_fac_sp, cart_comp, ncart,
+    AtmSlot, BasSlot, Env, SQRTPI, common_fac_sp, cart_comp_l, ncart,
     ATM_SLOTS,
 };
 use crate::rys::rys_roots;
@@ -150,16 +150,8 @@ fn nuc_primitive_sum(
     nroots: usize,
     fac: f64,
 ) {
-    let mut i_nx = Vec::new(); let mut i_ny = Vec::new(); let mut i_nz = Vec::new();
-    let mut j_nx = Vec::new(); let mut j_ny = Vec::new(); let mut j_nz = Vec::new();
-    cart_comp(&mut i_nx, &mut i_ny, &mut i_nz, i_l);
-    cart_comp(&mut j_nx, &mut j_ny, &mut j_nz, j_l);
-    let i_nx: Vec<usize> = i_nx.iter().map(|&v| v as usize).collect();
-    let i_ny: Vec<usize> = i_ny.iter().map(|&v| v as usize).collect();
-    let i_nz: Vec<usize> = i_nz.iter().map(|&v| v as usize).collect();
-    let j_nx: Vec<usize> = j_nx.iter().map(|&v| v as usize).collect();
-    let j_ny: Vec<usize> = j_ny.iter().map(|&v| v as usize).collect();
-    let j_nz: Vec<usize> = j_nz.iter().map(|&v| v as usize).collect();
+    let (i_nx, i_ny, i_nz) = cart_comp_l(i_l);
+    let (j_nx, j_ny, j_nz) = cart_comp_l(j_l);
 
     let aij2 = 0.5 / aij;
 
@@ -207,9 +199,9 @@ fn nuc_primitive_sum(
         for ni in 0..nfi {
             for nj in 0..nfj {
                 let v = wi
-                    * g1d(i_nx[ni], j_nx[nj], r0x, rbx)
-                    * g1d(i_ny[ni], j_ny[nj], r0y, rby)
-                    * g1d(i_nz[ni], j_nz[nj], r0z, rbz);
+                    * g1d(i_nx[ni] as usize, j_nx[nj] as usize, r0x, rbx)
+                    * g1d(i_ny[ni] as usize, j_ny[nj] as usize, r0y, rby)
+                    * g1d(i_nz[ni] as usize, j_nz[nj] as usize, r0z, rbz);
                 let row = i_off + ni;
                 let col = j_off + nj;
                 out[row + col * out_ni] += fac * v;

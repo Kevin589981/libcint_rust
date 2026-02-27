@@ -14,7 +14,7 @@
 
 use crate::types::{
     AtmSlot, BasSlot, Env,
-    common_fac_sp, cart_comp, ncart,
+    common_fac_sp, cart_comp_l, ncart,
     SQRTPI,
 };
 use std::f64::consts::PI;
@@ -201,18 +201,8 @@ fn kin_accumulate(
     nprim_i: usize,
     nprim_j: usize,
 ) {
-    let mut i_nx = Vec::new(); let mut i_ny = Vec::new(); let mut i_nz = Vec::new();
-    let mut j_nx = Vec::new(); let mut j_ny = Vec::new(); let mut j_nz = Vec::new();
-    cart_comp(&mut i_nx, &mut i_ny, &mut i_nz, i_l);
-    cart_comp(&mut j_nx, &mut j_ny, &mut j_nz, j_l);
-
-    // Convert to usize once
-    let i_nx: Vec<usize> = i_nx.iter().map(|&v| v as usize).collect();
-    let i_ny: Vec<usize> = i_ny.iter().map(|&v| v as usize).collect();
-    let i_nz: Vec<usize> = i_nz.iter().map(|&v| v as usize).collect();
-    let j_nx: Vec<usize> = j_nx.iter().map(|&v| v as usize).collect();
-    let j_ny: Vec<usize> = j_ny.iter().map(|&v| v as usize).collect();
-    let j_nz: Vec<usize> = j_nz.iter().map(|&v| v as usize).collect();
+    let (i_nx, i_ny, i_nz) = cart_comp_l(i_l);
+    let (j_nx, j_ny, j_nz) = cart_comp_l(j_l);
 
     // Pre-compute all 1D overlap and kinetic integrals needed.
     // Unique (m,n) pairs are just the product of Cartesian components.
@@ -225,9 +215,9 @@ fn kin_accumulate(
             let cij  = ci * cj * gz0;
 
             for ni in 0..nfi {
-                let mx = i_nx[ni]; let my = i_ny[ni]; let mz = i_nz[ni];
+                let mx = i_nx[ni] as usize; let my = i_ny[ni] as usize; let mz = i_nz[ni] as usize;
                 for nj in 0..nfj {
-                    let nx = j_nx[nj]; let ny = j_ny[nj]; let nz = j_nz[nj];
+                    let nx = j_nx[nj] as usize; let ny = j_ny[nj] as usize; let nz = j_nz[nj] as usize;
 
                     // 1D overlap factors
                     let sx = s_1d(mx, nx, pa[0], pb[0], aij2);

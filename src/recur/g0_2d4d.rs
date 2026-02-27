@@ -6,7 +6,7 @@
 //!   3. `g0_2e_2d4d_unrolled` — fast path (rys_order ≤ 2) using pre-expanded formulas
 //!   4. `g2e_index_xyz`     — build index table for integral extraction
 
-use crate::types::{EnvVars, cart_comp};
+use crate::types::{EnvVars, cart_comp_l};
 use crate::recur::g0_2e::Rys2eT;
 
 // ─────────────────────────────────────────────────────────────────
@@ -1006,15 +1006,10 @@ pub fn g2e_index_xyz(envs: &EnvVars) -> Vec<usize> {
     let dj   = envs.g_stride_j;
     let g_size = envs.g_size;
 
-    let mut i_nx = Vec::new(); let mut i_ny = Vec::new(); let mut i_nz = Vec::new();
-    let mut j_nx = Vec::new(); let mut j_ny = Vec::new(); let mut j_nz = Vec::new();
-    let mut k_nx = Vec::new(); let mut k_ny = Vec::new(); let mut k_nz = Vec::new();
-    let mut l_nx = Vec::new(); let mut l_ny = Vec::new(); let mut l_nz = Vec::new();
-
-    cart_comp(&mut i_nx, &mut i_ny, &mut i_nz, i_l);
-    cart_comp(&mut j_nx, &mut j_ny, &mut j_nz, j_l);
-    cart_comp(&mut k_nx, &mut k_ny, &mut k_nz, k_l);
-    cart_comp(&mut l_nx, &mut l_ny, &mut l_nz, l_l);
+    let (i_nx, i_ny, i_nz) = cart_comp_l(i_l);
+    let (j_nx, j_ny, j_nz) = cart_comp_l(j_l);
+    let (k_nx, k_ny, k_nz) = cart_comp_l(k_l);
+    let (l_nx, l_ny, l_nz) = cart_comp_l(l_l);
 
     let ofx: usize = 0;
     let ofy: usize = g_size;

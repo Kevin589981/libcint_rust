@@ -13,7 +13,7 @@
 use std::f64::consts::PI;
 use crate::types::{
     AtmSlot, BasSlot, Env,
-    common_fac_sp, cart_comp, ncart, SQRTPI,
+    common_fac_sp, cart_comp_l, ncart, SQRTPI,
 };
 
 // ─────────────────────────────────────────────────────────────────
@@ -285,17 +285,8 @@ fn overlap_analytical(
         }
     };
 
-    let mut i_nx = Vec::new(); let mut i_ny = Vec::new(); let mut i_nz = Vec::new();
-    let mut j_nx = Vec::new(); let mut j_ny = Vec::new(); let mut j_nz = Vec::new();
-    cart_comp(&mut i_nx, &mut i_ny, &mut i_nz, i_l);
-    cart_comp(&mut j_nx, &mut j_ny, &mut j_nz, j_l);
-
-    let i_nx = i_nx.iter().map(|&v| v as usize).collect::<Vec<_>>();
-    let i_ny = i_ny.iter().map(|&v| v as usize).collect::<Vec<_>>();
-    let i_nz = i_nz.iter().map(|&v| v as usize).collect::<Vec<_>>();
-    let j_nx = j_nx.iter().map(|&v| v as usize).collect::<Vec<_>>();
-    let j_ny = j_ny.iter().map(|&v| v as usize).collect::<Vec<_>>();
-    let j_nz = j_nz.iter().map(|&v| v as usize).collect::<Vec<_>>();
+    let (i_nx, i_ny, i_nz) = cart_comp_l(i_l);
+    let (j_nx, j_ny, j_nz) = cart_comp_l(j_l);
 
     // Accumulate over contractions
     for ic in 0..nctr_i {
@@ -307,9 +298,9 @@ fn overlap_analytical(
             for ni in 0..nfi {
                 for nj in 0..nfj {
                     let v = cij
-                        * s(i_nx[ni], j_nx[nj], pax, pbx)
-                        * s(i_ny[ni], j_ny[nj], pay, pby)
-                        * s(i_nz[ni], j_nz[nj], paz, pbz);
+                        * s(i_nx[ni] as usize, j_nx[nj] as usize, pax, pbx)
+                        * s(i_ny[ni] as usize, j_ny[nj] as usize, pay, pby)
+                        * s(i_nz[ni] as usize, j_nz[nj] as usize, paz, pbz);
                     // Column-major: out[row + col*out_ni]
                     // row = nfi*ic + ni; col = nfj*jc + nj
                     let row = nfi * ic + ni;
