@@ -1,0 +1,21 @@
+[package]
+name = "libcint-rs"
+version = "0.1.0"
+edition = "2021"
+description = "Rust reimplementation of libcint quantum chemistry integral engine"
+license = "Apache-2.0"
+
+[lib]
+name = "cint"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# Parallel processing — parallel primitives loops in Phase 2
+# rayon = "1"
+
+[dev-dependencies]
+approx = "0.5"
+
+[profile.release]
+opt-level = 3
+# Never use fast-math: quantum chemistry requires deterministic fp behavior
