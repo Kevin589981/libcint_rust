@@ -23,8 +23,12 @@ use crate::recur::{g0_2e, g2e_index_xyz};
 /// Compute two-electron repulsion integrals `(ij|kl)` for shell quartet
 /// `(shls[0], shls[1], shls[2], shls[3])`.
 ///
+/// This is the **bare** implementation with no Cauchy-Schwarz screening.
+/// It is called by the C-ABI wrapper (which does the opt check) and by
+/// `CINTOpt::build` when building screening data.
+///
 /// Returns 1 if the result is non-zero, 0 otherwise.
-pub fn int2e_cart(
+pub fn int2e_cart_bare(
     out:  *mut f64,
     dims: *const i32,
     shls: *const i32,
