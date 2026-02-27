@@ -46,6 +46,23 @@ pub unsafe extern "C" fn int1e_ovlp_cart(
     int1e::int1e_ovlp_cart(out, dims, shls, atm, natm, bas, nbas, env)
 }
 
+/// Kinetic energy integral <i|−½∇²|j> (Cartesian basis).
+#[no_mangle]
+pub unsafe extern "C" fn int1e_kin_cart(
+    out:   *mut f64,
+    dims:  *const i32,
+    shls:  *const i32,
+    atm:   *const i32,
+    natm:  i32,
+    bas:   *const i32,
+    nbas:  i32,
+    env:   *const f64,
+    _opt:  *const std::ffi::c_void,
+    _cache: *mut f64,
+) -> i32 {
+    int1e::int1e_kin_cart(out, dims, shls, atm, natm, bas, nbas, env)
+}
+
 /// Nuclear attraction integral <i|V_nuc|j> (Cartesian basis).
 #[no_mangle]
 pub unsafe extern "C" fn int1e_nuc_cart(
@@ -105,6 +122,108 @@ pub unsafe extern "C" fn int1e_nuc_optimizer(
 /// ERI optimizer stub.
 #[no_mangle]
 pub unsafe extern "C" fn int2e_optimizer(
+    opt: *mut *mut std::ffi::c_void,
+    _atm: *const i32, _natm: i32,
+    _bas: *const i32, _nbas: i32,
+    _env: *const f64,
+) {
+    if !opt.is_null() { *opt = std::ptr::null_mut(); }
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Spherical-harmonic variants
+//
+// PySCF calls the _sph functions by default.  For shells with l ≤ 1 the
+// Cartesian → spherical transformation is the identity, so we simply
+// forward to the Cartesian implementation.  For l ≥ 2 a full cart2sph
+// contraction would be needed here; that path is guarded by the transform
+// module and will panic for l > 2 until implemented.
+// ─────────────────────────────────────────────────────────────────
+
+/// Overlap integral (spherical basis) — for l ≤ 1 identical to Cartesian.
+#[no_mangle]
+pub unsafe extern "C" fn int1e_ovlp_sph(
+    out: *mut f64, dims: *const i32, shls: *const i32,
+    atm: *const i32, natm: i32, bas: *const i32, nbas: i32,
+    env: *const f64, _opt: *const std::ffi::c_void, _cache: *mut f64,
+) -> i32 {
+    int1e::int1e_ovlp_cart(out, dims, shls, atm, natm, bas, nbas, env)
+}
+
+/// Kinetic energy integral (spherical basis) — for l ≤ 1 identical to Cartesian.
+#[no_mangle]
+pub unsafe extern "C" fn int1e_kin_sph(
+    out: *mut f64, dims: *const i32, shls: *const i32,
+    atm: *const i32, natm: i32, bas: *const i32, nbas: i32,
+    env: *const f64, _opt: *const std::ffi::c_void, _cache: *mut f64,
+) -> i32 {
+    int1e::int1e_kin_cart(out, dims, shls, atm, natm, bas, nbas, env)
+}
+
+/// Nuclear attraction integral (spherical basis) — for l ≤ 1 identical to Cartesian.
+#[no_mangle]
+pub unsafe extern "C" fn int1e_nuc_sph(
+    out: *mut f64, dims: *const i32, shls: *const i32,
+    atm: *const i32, natm: i32, bas: *const i32, nbas: i32,
+    env: *const f64, _opt: *const std::ffi::c_void, _cache: *mut f64,
+) -> i32 {
+    int1e::int1e_nuc_cart(out, dims, shls, atm, natm, bas, nbas, env)
+}
+
+/// ERI (spherical basis) — for l ≤ 1 identical to Cartesian.
+#[no_mangle]
+pub unsafe extern "C" fn int2e_sph(
+    out: *mut f64, dims: *const i32, shls: *const i32,
+    atm: *const i32, natm: i32, bas: *const i32, nbas: i32,
+    env: *const f64, _opt: *const std::ffi::c_void, _cache: *mut f64,
+) -> i32 {
+    int2e::int2e_cart(out, dims, shls, atm, natm, bas, nbas, env)
+}
+
+// ─── Optimizer stubs for sph/kin variants ───────────────────────────────────
+
+#[no_mangle]
+pub unsafe extern "C" fn int1e_kin_optimizer(
+    opt: *mut *mut std::ffi::c_void,
+    _atm: *const i32, _natm: i32,
+    _bas: *const i32, _nbas: i32,
+    _env: *const f64,
+) {
+    if !opt.is_null() { *opt = std::ptr::null_mut(); }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn int1e_ovlp_sph_optimizer(
+    opt: *mut *mut std::ffi::c_void,
+    _atm: *const i32, _natm: i32,
+    _bas: *const i32, _nbas: i32,
+    _env: *const f64,
+) {
+    if !opt.is_null() { *opt = std::ptr::null_mut(); }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn int1e_kin_sph_optimizer(
+    opt: *mut *mut std::ffi::c_void,
+    _atm: *const i32, _natm: i32,
+    _bas: *const i32, _nbas: i32,
+    _env: *const f64,
+) {
+    if !opt.is_null() { *opt = std::ptr::null_mut(); }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn int1e_nuc_sph_optimizer(
+    opt: *mut *mut std::ffi::c_void,
+    _atm: *const i32, _natm: i32,
+    _bas: *const i32, _nbas: i32,
+    _env: *const f64,
+) {
+    if !opt.is_null() { *opt = std::ptr::null_mut(); }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn int2e_sph_optimizer(
     opt: *mut *mut std::ffi::c_void,
     _atm: *const i32, _natm: i32,
     _bas: *const i32, _nbas: i32,

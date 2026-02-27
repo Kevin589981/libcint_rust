@@ -1,14 +1,23 @@
 #!/usr/bin/env python3
 """
-validate_pyscf.py — Compare libcint-rs integrals against PySCF/libcint reference.
+validate_pyscf.py — Phase 1 POC validation: libcint-rs vs PySCF/libcint reference.
+
+Tests performed:
+  1. int1e_ovlp_cart  — shell-by-shell overlap integrals
+  2. int1e_kin_cart   — shell-by-shell kinetic energy integrals
+  3. int1e_nuc_cart   — shell-by-shell nuclear attraction integrals
+  4. int2e_cart       — full ERI tensor (all shell quartets)
+  5. HF energy        — 1-electron Hamiltonian built from our integrals;
+                        SCF diagonalisation; compare total energy to PySCF
+
+Molecule: H2 / STO-3G (2 s-type contracted shells, all s-orbital)
+Pass criterion: all integral max-errors < 1e-10, |ΔE_HF| < 1e-8 Hartree.
 
 Usage:
-    # First build the Rust library:
-    #   cd /home/kevin/libcint_rust && cargo build --release
-    # Then run:
-    #   python python/validate_pyscf.py
+    cargo build --release
+    uv run python python/validate_pyscf.py
 
-Requires: pyscf, numpy
+Requires: pyscf, numpy, scipy
 """
 
 import ctypes
@@ -49,9 +58,11 @@ mol.build()
 # ── 4. Reference integrals from PySCF ────────────────────────────────────────
 print("=== PySCF reference integrals ===")
 ref_ovlp = mol.intor("int1e_ovlp_cart")
+ref_kin  = mol.intor("int1e_kin_cart")
 ref_nuc  = mol.intor("int1e_nuc_cart")
 ref_eri  = mol.intor("int2e_cart")
 print(f"  Overlap  shape: {ref_ovlp.shape}")
+print(f"  Kinetic  shape: {ref_kin.shape}")
 print(f"  Nuclear  shape: {ref_nuc.shape}")
 print(f"  ERI      shape: {ref_eri.shape}")
 print()
@@ -227,6 +238,26 @@ if max_err_nuc < 1e-8:
     print("  ✓ Nuclear integrals OK")
 print()
 
+# ── 7b. Kinetic energy ────────────────────────────────────────────────────────
+print("=== int1e_kin_cart ===")
+max_err_kin = 0.0
+for i in range(nbas):
+    for j in range(nbas):
+        our = call_int1e("int1e_kin_cart", (i, j), mol)
+        ai = mol.ao_loc_nr(cart=True)[i]; bi_end = mol.ao_loc_nr(cart=True)[i+1]
+        aj = mol.ao_loc_nr(cart=True)[j]; bj_end = mol.ao_loc_nr(cart=True)[j+1]
+        ref = ref_kin[ai:bi_end, aj:bj_end]
+        err = np.max(np.abs(our - ref))
+        max_err_kin = max(max_err_kin, err)
+        if err > 1e-8:
+            print(f"  FAIL kin shells ({i},{j}) err={err:.3e}  our={our.flat[0]:.6f}  ref={ref.flat[0]:.6f}")
+            all_pass = False
+
+print(f"  max error: {max_err_kin:.3e}")
+if max_err_kin < 1e-8:
+    print("  ✓ Kinetic integrals OK")
+print()
+
 # ── 8. ERI ────────────────────────────────────────────────────────────────────
 print("=== int2e_cart ===")
 max_err_eri = 0.0
@@ -251,9 +282,89 @@ if max_err_eri < 1e-8:
     print("  ✓ ERI OK")
 print()
 
-# ── 9. Summary ────────────────────────────────────────────────────────────────
+# ── 9. HF energy from our integrals ──────────────────────────────────────────
+print("=== HF energy (numpy RHF using our integrals) ===")
+import scipy.linalg
+
+# Assemble full matrices from our library
+nao = mol.nao_nr(cart=True)
+our_S   = np.zeros((nao, nao))
+our_T   = np.zeros((nao, nao))
+our_V   = np.zeros((nao, nao))
+our_eri = np.zeros((nao, nao, nao, nao))
+
+ao_loc = mol.ao_loc_nr(cart=True)
+for i in range(nbas):
+    i0, i1 = ao_loc[i], ao_loc[i+1]
+    for j in range(nbas):
+        j0, j1 = ao_loc[j], ao_loc[j+1]
+        our_S[i0:i1, j0:j1] = call_int1e("int1e_ovlp_cart", (i,j), mol)
+        our_T[i0:i1, j0:j1] = call_int1e("int1e_kin_cart",  (i,j), mol)
+        our_V[i0:i1, j0:j1] = call_int1e("int1e_nuc_cart",  (i,j), mol)
+        for k in range(nbas):
+            k0, k1 = ao_loc[k], ao_loc[k+1]
+            for l in range(nbas):
+                l0, l1 = ao_loc[l], ao_loc[l+1]
+                our_eri[i0:i1, j0:j1, k0:k1, l0:l1] = call_int2e((i,j,k,l), mol)
+
+h1e = our_T + our_V  # core Hamiltonian
+
+# Nuclear repulsion energy
+coords = mol.atom_coords()
+charges = mol.atom_charges()
+e_nn = 0.0
+for a in range(mol.natm):
+    for b in range(a+1, mol.natm):
+        r = np.linalg.norm(coords[a] - coords[b])
+        e_nn += charges[a] * charges[b] / r
+
+# Simple RHF for closed-shell molecule (2 electrons, 1 occ MO for H2)
+nocc = mol.nelectron // 2
+
+# Initial Fock = h1e, solve generalized eigenvalue problem
+mo_e, mo_c = scipy.linalg.eigh(h1e, our_S)
+dm = 2.0 * mo_c[:, :nocc] @ mo_c[:, :nocc].T  # density matrix
+
+# SCF iterations (max 50)
+e_hf_prev = 0.0
+for scf_iter in range(50):
+    # Build Fock matrix: F_pq = h_pq + sum_rs D_rs * [(pq|rs) - 0.5*(pr|qs)]
+    J = np.einsum("pqrs,rs->pq", our_eri, dm)
+    K = np.einsum("prqs,rs->pq", our_eri, dm)
+    fock = h1e + J - 0.5 * K
+
+    # Solve F C = e S C
+    mo_e, mo_c = scipy.linalg.eigh(fock, our_S)
+    dm_new = 2.0 * mo_c[:, :nocc] @ mo_c[:, :nocc].T
+
+    # Energy: E = 0.5 * Tr[D(h + F)] + E_nn
+    e_hf = 0.5 * np.einsum("pq,pq->", dm_new, h1e + fock) + e_nn
+
+    if abs(e_hf - e_hf_prev) < 1e-12:
+        break
+    e_hf_prev = e_hf
+    dm = dm_new
+
+# PySCF reference HF energy
+from pyscf import scf
+mf = scf.RHF(mol)
+mf.verbose = 0
+e_ref = mf.kernel()
+
+delta_e = abs(e_hf - e_ref)
+print(f"  Our RHF energy   : {e_hf:.10f} Hartree")
+print(f"  PySCF RHF energy : {e_ref:.10f} Hartree")
+print(f"  |ΔE|             : {delta_e:.3e} Hartree")
+if delta_e < 1e-8:
+    print("  ✓ HF energy matches PySCF to < 1e-8 Hartree")
+else:
+    print(f"  FAIL: |ΔE| = {delta_e:.3e} exceeds 1e-8 Hartree threshold")
+    all_pass = False
+print()
+
+# ── 10. Summary ────────────────────────────────────────────────────────────────
 print("=" * 50)
-if all_pass and max_err_eri < 1e-8 and max_err_nuc < 1e-8:
+if all_pass and max_err_eri < 1e-8 and max_err_nuc < 1e-8 and max_err_kin < 1e-8 and delta_e < 1e-8:
     print("ALL TESTS PASSED")
 else:
     print("SOME TESTS FAILED — see above")
