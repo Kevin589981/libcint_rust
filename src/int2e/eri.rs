@@ -112,6 +112,12 @@ pub fn int2e_cart_bare(
         // Build index table (uses g_stride etc. from envs)
         let idx = g2e_index_xyz(&envs);
 
+        // Precompute per-n output deltas (computed once per shell quartet)
+        let delta_n = build_delta_n(nf, nfi, nfj, nfk, nctr_i, nctr_j, nctr_k, nctr_l);
+        let stride_j = nfi * nctr_i;
+        let stride_k = stride_j * nfj * nctr_j;
+        let stride_l = stride_k * nfk * nctr_k;
+
         // Common factor: (π^(5/2)) * fac_sp(i) * fac_sp(j) * fac_sp(k) * fac_sp(l)
         // common_factor from g2e.c: (M_PI*M_PI*M_PI)*2/SQRTPI = 2*pi^(5/2)
         let common_fac = 2.0 * SQRTPI.powi(5)
@@ -119,7 +125,8 @@ pub fn int2e_cart_bare(
             * common_fac_sp(k_l) * common_fac_sp(l_l);
 
         let g_buf_size = 3 * envs.g_size;
-        let mut g = vec![0.0f64; g_buf_size];
+        let mut g    = vec![0.0f64; g_buf_size];
+        let mut gout = vec![0.0f64; nf];   // reduced gout, computed once per primitive
 
         let mut has_value = false;
 
@@ -171,7 +178,11 @@ pub fn int2e_cart_bare(
                         let ok = g0_2e(&mut g, &ev2);
                         if !ok { continue; }
 
-                        // Contract into output
+                        // Reduce g-buffer over Rys roots — once per primitive quadruplet.
+                        // match dispatch lets LLVM auto-vectorise the outer n-loop.
+                        compute_gout(&g, &idx, nf, ev2.nrys_roots, &mut gout);
+
+                        // Scatter gout into output for each contraction combination.
                         for ic in 0..nctr_i {
                             let ci = coei[ip + ic * nprim_i];
                             for jc in 0..nctr_j {
@@ -181,17 +192,11 @@ pub fn int2e_cart_bare(
                                     for lc in 0..nctr_l {
                                         let cl = coel[lp + lc * nprim_l];
                                         let c = ci * cj * ck * cl;
-                                        accumulate_gout(
-                                            out_sl,
-                                            &g,
-                                            &idx,
-                                            nf,
-                                            &ev2,
-                                            c,
-                                            ic, jc, kc, lc,
-                                            nfi, nfj, nfk, nfl,
-                                            nctr_i, nctr_j, nctr_k, nctr_l,
-                                        );
+                                        let base = nfi*ic
+                                            + stride_j * (nfj*jc)
+                                            + stride_k * (nfk*kc)
+                                            + stride_l * (nfl*lc);
+                                        scatter_gout(out_sl, &gout, &delta_n, nf, c, base);
                                         has_value = true;
                                     }
                                 }
@@ -206,46 +211,125 @@ pub fn int2e_cart_bare(
     }
 }
 
-/// Extract Cartesian integrals from the g-buffer and accumulate into `out`.
-#[allow(clippy::too_many_arguments)]
-fn accumulate_gout(
-    out:    &mut [f64],
-    g:      &[f64],
-    idx:    &[usize],
-    nf:     usize,
-    envs:   &EnvVars,
-    c:      f64,
-    ic: usize, jc: usize, kc: usize, lc: usize,
-    nfi: usize, nfj: usize, nfk: usize, nfl: usize,
-    nctr_i: usize, nctr_j: usize, nctr_k: usize, nctr_l: usize,
-) {
-    let nroots = envs.nrys_roots;
-    for n in 0..nf {
-        let ix = idx[3 * n];
-        let iy = idx[3 * n + 1];
-        let iz = idx[3 * n + 2];
-        let mut s = 0.0;
-        for r in 0..nroots {
-            s += g[ix + r] * g[iy + r] * g[iz + r];
+// ─────────────────────────────────────────────────────────────────
+// SIMD-friendly gout reduction
+// ─────────────────────────────────────────────────────────────────
+
+/// Reduce the g-buffer over Rys roots into a flat `gout[0..nf]` array.
+///
+/// Each `gout[n] = Σ_{r=0}^{nroots-1} g[ix+r] * g[iy+r] * g[iz+r]`
+///
+/// The `match nroots` dispatch gives LLVM a **fixed inner-loop length**, which
+/// enables auto-vectorisation of the outer `n` loop with AVX/SSE2.  This is the
+/// Rust equivalent of libcint's `gout2e_simd.c` case-switch.  Pairs/quads are
+/// written as two-level trees of additions to expose instruction-level
+/// parallelism (ILP) to the backend scheduler.
+#[inline(always)]
+fn compute_gout(g: &[f64], idx: &[usize], nf: usize, nroots: usize, gout: &mut [f64]) {
+    match nroots {
+        1 => {
+            for n in 0..nf {
+                let ix = idx[3*n]; let iy = idx[3*n+1]; let iz = idx[3*n+2];
+                gout[n] = g[ix] * g[iy] * g[iz];
+            }
         }
-        // n indexes (j, l, k, i) with i fastest:
-        // n = i + nfi*(k + nfk*(l + nfl*j))  (libcint order)
-        let ni = n % nfi;
-        let tmp = n / nfi;
-        let nk = tmp % nfk;
-        let tmp = tmp / nfk;
-        let nl = tmp % nfl;
-        let nj = tmp / nfl;
+        2 => {
+            for n in 0..nf {
+                let ix = idx[3*n]; let iy = idx[3*n+1]; let iz = idx[3*n+2];
+                gout[n] = g[ix  ]*g[iy  ]*g[iz  ]
+                        + g[ix+1]*g[iy+1]*g[iz+1];
+            }
+        }
+        3 => {
+            for n in 0..nf {
+                let ix = idx[3*n]; let iy = idx[3*n+1]; let iz = idx[3*n+2];
+                gout[n] = (g[ix  ]*g[iy  ]*g[iz  ]
+                         + g[ix+1]*g[iy+1]*g[iz+1])
+                         + g[ix+2]*g[iy+2]*g[iz+2];
+            }
+        }
+        4 => {
+            for n in 0..nf {
+                let ix = idx[3*n]; let iy = idx[3*n+1]; let iz = idx[3*n+2];
+                gout[n] = (g[ix  ]*g[iy  ]*g[iz  ]
+                         + g[ix+1]*g[iy+1]*g[iz+1])
+                        + (g[ix+2]*g[iy+2]*g[iz+2]
+                         + g[ix+3]*g[iy+3]*g[iz+3]);
+            }
+        }
+        5 => {
+            for n in 0..nf {
+                let ix = idx[3*n]; let iy = idx[3*n+1]; let iz = idx[3*n+2];
+                gout[n] = (g[ix  ]*g[iy  ]*g[iz  ]
+                         + g[ix+1]*g[iy+1]*g[iz+1])
+                        + (g[ix+2]*g[iy+2]*g[iz+2]
+                         + g[ix+3]*g[iy+3]*g[iz+3])
+                         + g[ix+4]*g[iy+4]*g[iz+4];
+            }
+        }
+        6 => {
+            for n in 0..nf {
+                let ix = idx[3*n]; let iy = idx[3*n+1]; let iz = idx[3*n+2];
+                gout[n] = (g[ix  ]*g[iy  ]*g[iz  ]
+                         + g[ix+1]*g[iy+1]*g[iz+1])
+                        + (g[ix+2]*g[iy+2]*g[iz+2]
+                         + g[ix+3]*g[iy+3]*g[iz+3])
+                        + (g[ix+4]*g[iy+4]*g[iz+4]
+                         + g[ix+5]*g[iy+5]*g[iz+5]);
+            }
+        }
+        _ => {
+            for n in 0..nf {
+                let ix = idx[3*n]; let iy = idx[3*n+1]; let iz = idx[3*n+2];
+                gout[n] = (0..nroots).map(|r| g[ix+r]*g[iy+r]*g[iz+r]).sum();
+            }
+        }
+    }
+}
 
-        let row = nfi * ic + ni;
-        let col_j = nfj * jc + nj;
-        let col_k = nfk * kc + nk;
-        let col_l = nfl * lc + nl;
+/// Precompute per-`n` output-index deltas (relative to the contraction base).
+///
+/// Layout: `n = ni + nfi*(nk + nfk*(nl + nfl*nj))` (libcint inner ordering).
+/// Each delta is `ni + stride_j*nj + stride_k*nk + stride_l*nl`, where
+/// `stride_j = nfi*nctr_i`, etc.  Computed once per shell quartet.
+fn build_delta_n(
+    nf: usize,
+    nfi: usize, nfj: usize, nfk: usize, // nfl implied
+    nctr_i: usize, nctr_j: usize, nctr_k: usize, nctr_l: usize,
+) -> Vec<usize> {
+    let stride_j = nfi * nctr_i;
+    let stride_k = stride_j * nfj * nctr_j;
+    let stride_l = stride_k * nfk * nctr_k;
+    let _ = nctr_l; // stride_l already captures everything
+    let nfl = nf / (nfi * nfj * nfk);
+    let mut delta = Vec::with_capacity(nf);
+    for n in 0..nf {
+        let ni   = n % nfi;
+        let rem  = n / nfi;
+        let nk   = rem % nfk;
+        let rem  = rem / nfk;
+        let nl   = rem % nfl;
+        let nj   = rem / nfl;
+        delta.push(ni + stride_j*nj + stride_k*nk + stride_l*nl);
+    }
+    delta
+}
 
-        // Column-major: out[i + ni*(j + nj*(k + nk*l))]
-        let flat_col = col_j + (nfj * nctr_j) * (col_k + (nfk * nctr_k) * col_l);
-        let idx_out  = row + (nfi * nctr_i) * flat_col;
-        out[idx_out] += c * s;
+/// Scatter a pre-computed `gout` slice into the contracted output buffer.
+///
+/// `base_ctr = nfi*ic + stride_j*(nfj*jc) + stride_k*(nfk*kc) + stride_l*(nfl*lc)`.
+/// Then `out[base_ctr + delta_n[n]] += c * gout[n]`.
+#[inline(always)]
+fn scatter_gout(
+    out:     &mut [f64],
+    gout:    &[f64],
+    delta_n: &[usize],
+    nf:      usize,
+    c:       f64,
+    base:    usize,
+) {
+    for n in 0..nf {
+        out[base + delta_n[n]] += c * gout[n];
     }
 }
 

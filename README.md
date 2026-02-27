@@ -4,7 +4,7 @@
 
 Provides a 100 % C-ABI-compatible shared library (`libcint.so`) that PySCF can load via `ctypes` as a drop-in replacement for the original C library — without any changes to PySCF source code.
 
-> **Status: Phase 2 — CINTOpt Cauchy-Schwarz screening + rayon parallel ERI fill complete. All 8 unit tests pass; H₂/STO-3G |ΔE_HF| = 1.8 × 10⁻¹⁴ Hartree.**
+> **Status: Phase 2 complete — CINTOpt Cauchy-Schwarz screening + rayon parallel ERI fill + build.rs compile-time Cartesian table codegen + SIMD-friendly gout separation (AVX2 auto-vectorised). All 8 unit tests pass; H₂/STO-3G |ΔE_HF| = 1.8 × 10⁻¹⁴ Hartree.**
 
 ---
 
@@ -28,7 +28,7 @@ Replace `libcint` with a safe, modern Rust implementation that:
 ### Quick Start
 
 ```bash
-# Build the shared library
+# Build the shared library (native CPU — enables AVX2/FMA)
 cargo build --release
 
 # The drop-in .so is at:
@@ -37,6 +37,10 @@ ls target/release/libcint.so
 # Run unit tests
 cargo test
 ```
+
+> `.cargo/config.toml` sets `target-cpu=native` for the release profile, so
+> the library uses the widest SIMD ISA available on the host (AVX2 on modern
+> x86 CPUs).  Remove that file if you need a portable binary.
 
 ### Exported C-ABI Symbols
 
@@ -83,6 +87,8 @@ CACHE_SIZE_T int_xxx(double *out, int *dims, int *shls,
 | ERI (bare) | `src/int2e/eri.rs` | `(ij\|kl)` Cartesian 4-center 2e, no screening | ✅ |
 | ERI driver | `src/int2e/driver.rs` | Single-quartet CS screening + rayon batch fill | ✅ |
 | CS pre-screener | `src/optimizer.rs` | `CINTOpt`: sqrt-Schwarz table, `passes(i,j,k,l)` | ✅ |
+| Static Cartesian tables | `build.rs` → `cart_tables.rs` | Compile-time l=0–4 nx/ny/nz arrays; zero-alloc `cart_comp_l()` | ✅ |
+| SIMD gout kernel | `src/int2e/eri.rs` | `compute_gout`: `match nroots` → LLVM auto-vec (AVX2 `vmulpd`/`vaddpd`); scatter separated from gout | ✅ |
 | C-ABI exports | `src/lib.rs` | 19 exported symbols | ✅ |
 
 ### Not Yet Implemented
@@ -98,8 +104,8 @@ CACHE_SIZE_T int_xxx(double *out, int *dims, int *shls,
 | Breit / Gaunt interaction | `breit.c` | Phase 3 |
 | F12 / STG integrals | `cint2e_f12.c` | Phase 3 |
 | Hessian integrals | `autocode/hess.c` | Phase 3 |
-| SIMD vectorisation | `gout2e_simd.c` | Phase 2 |
-| `build.rs` codegen for l = 0…4 | `scripts/gen-code.cl` | Phase 2 |
+| SIMD vectorisation | `gout2e_simd.c` | ✅ Done (Phase 2) |
+| `build.rs` codegen for l = 0…4 | `scripts/gen-code.cl` | ✅ Done (Phase 2) |
 | PySCF end-to-end validation | `python/validate_pyscf.py` | ✅ Done (Phase 1) |
 
 ### Architecture
@@ -161,7 +167,7 @@ Apache-2.0 — same as PySCF.
 ### 快速开始
 
 ```bash
-# 构建动态库
+# 构建动态库（本机 CPU — 默认启用 AVX2/FMA）
 cargo build --release
 
 # 产物路径
@@ -170,6 +176,9 @@ ls target/release/libcint.so
 # 运行单元测试
 cargo test
 ```
+
+> `.cargo/config.toml` 设置了 `target-cpu=native`，Release 版本会利用宿主 CPU
+> 的最宽 SIMD 指令集（现代 x86 上为 AVX2）。如需可移植二进制，删除该文件即可。
 
 ### 已导出的 C-ABI 符号
 
@@ -204,6 +213,7 @@ CACHE_SIZE_T int_xxx(double *out, int *dims, int *shls,
 | 模块 | 文件 | 功能描述 | 状态 |
 |---|---|---|---|
 | 数据结构 | `src/types.rs` | `AtmSlot`、`BasSlot`、`Env`、`EnvVars` | ✅ |
+| 静态笛卡尔分量表 | `build.rs` → `cart_tables.rs` | 编译期生成 l=0–4 nx/ny/nz 数组；零分配 `cart_comp_l()` | ✅ |
 | Boys 函数 | `src/rys/mod.rs` | $F_m(t)$，Taylor/渐近展开 + 高斯求积 | ✅ |
 | Rys 根与权重 | `src/rys/mod.rs` | Wheeler 算法 + 隐位移 QL 特征求解，1~6 阶 | ✅ |
 | 2e 原始积分核 | `src/recur/g0_2e.rs` | Rys2eT 中间量、g 缓冲初始化 | ✅ |
@@ -215,6 +225,7 @@ CACHE_SIZE_T int_xxx(double *out, int *dims, int *shls,
 | ERI 裸核 | `src/int2e/eri.rs` | `(ij\|kl)` 笛卡尔 4 中心 2 电子，无筛选 | ✅ |
 | ERI 驱动层 | `src/int2e/driver.rs` | 单四元组 CS 筛选 + rayon 并行批量填充 | ✅ |
 | CS 预筛选器 | `src/optimizer.rs` | `CINTOpt`：sqrt-Schwarz 表、`passes(i,j,k,l)` | ✅ |
+| SIMD gout 核 | `src/int2e/eri.rs` | `compute_gout`：`match nroots` → LLVM 自动向量化（AVX2 `vmulpd`/`vaddpd`）；gout 与散射分离 | ✅ |
 | C-ABI 导出 | `src/lib.rs` | 19 个导出符号 | ✅ |
 
 ### 尚未实现
@@ -230,8 +241,8 @@ CACHE_SIZE_T int_xxx(double *out, int *dims, int *shls,
 | Breit/Gaunt 相互作用 | `breit.c` | 第三阶段 |
 | F12/STG 显式相关积分 | `cint2e_f12.c` | 第三阶段 |
 | Hessian 积分 | `autocode/hess.c` | 第三阶段 |
-| SIMD 向量化 | `gout2e_simd.c` | 第二阶段 |
-| `build.rs` 代码生成（l = 0…4 展开） | `scripts/gen-code.cl` | 第二阶段 |
+| SIMD 向量化 | `gout2e_simd.c` | ✅ 已完成（第二阶段） |
+| `build.rs` 代码生成（l = 0…4 展开） | `scripts/gen-code.cl` | ✅ 已完成（第二阶段） |
 | PySCF 端到端验证（H₂O/STO-3G HF） | `python/validate_pyscf.py` | ✅ 已完成（第一阶段） |
 
 ### 代码结构
@@ -280,8 +291,8 @@ src/
   ✅ CINTOpt Cauchy-Schwarz 预筛选（optimizer.rs）
   ✅ rayon 并行 ERI 批量填充（int2e/driver.rs）
   ✅ C-ABI 符号扩展至 19 个（CINTdel_optimizer、int2e_fill_cart）
-  ☐ SIMD 向量化
-  ☐ build.rs 代码生成（l=0…4 静态展开）
+  ✅ build.rs 代码生成（l=0…4 静态笛卡尔分量表，零分配 cart_comp_l()）
+  ✅ SIMD 优化：gout 归约与收缩散射分离；match nroots 初始化 ⇒ LLVM 自动向量化（AVX2 vmulpd/vaddpd）
 
 第三阶段（功能扩展）
   ☐ l ≥ 3 球谐变换

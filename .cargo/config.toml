@@ -1,0 +1,6 @@
+[profile.release]
+# Enable the host CPU's full instruction set (AVX2, FMA, etc.) for
+# maximum auto-vectorisation.  The resulting .so is NOT portable to
+# other machines, but that is acceptable for a research library.
+[build]
+rustflags = ["-C", "target-cpu=native"]
